@@ -1,0 +1,72 @@
+---
+title: "US_AmpSeq"
+author: "MJB"
+date: "3/1/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Libraries
+--------------------------------------------------------------------------------------------------------------------
+```{r}
+# libraries
+library(tidyverse)
+#library(readxl)
+library(dada2)
+library(DECIPHER)
+
+renv::snapshot()
+
+```
+
+## 2.1 Processing 16S reads in dada2
+--------------------------------------------------------------------------------------------------------------------
+```{r}
+# read in sample names
+samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED/samples-16S.txt", what="character")
+
+
+forward_16S_reads <- paste0("16S_", samples, "_1_trimmed.fastq.gz")
+reverse_16S_reads <- paste0("16S_", samples, "_2_trimmed.fastq.gz")
+
+filtered_forward_16S_reads <- paste0("16S_", samples, "_1_filtered.fastq.gz")
+filtered_reverse_16S_reads <- paste0("16S_", samples, "_2_filtered.fastq.gz")
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+pF = plotQualityProfile(forward_16S_reads) # median drops below Q30 around 260
+
+  # the primers span 515-926, we cut off about 40 bps when removing the primers, so
+  # our target amplicon now is about 370
+  # with 260 from forward, the reverse would need to be 110 minimum to reach
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+pR = plotQualityProfile(reverse_16S_reads) # median drops below Q30 around 200
+
+  # when doing the trimming step, it's important to make sure we aren't trimming them
+  # so short that they cannot overlap, which would cause problems when we try to merge later
+  # trimming the forward to 250 and reverse to 190 would leave us with around 70 bps overlap
+
+
+pdf('DK-R_16S_F_reads.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('DK-R_16S_R_reads.pdf',width = 40, height =30)
+pR
+dev.off()
+
+fastqFilter(fn, trimmed, truncQ=0, truncLen=224, verbose=TRUE)
+plotQualityProfile(trimmed)
+
+
+```
+
+## 2.2 Processing 18S reads in dada2
+--------------------------------------------------------------------------------------------------------------------
+```{r}
+
+
+```
+
