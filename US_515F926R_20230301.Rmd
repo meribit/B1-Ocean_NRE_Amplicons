@@ -18,16 +18,16 @@ library(tidyverse)
 library(dada2)
 library(DECIPHER)
 
-renv::snapshot()
-
+#renv::snapshot()
+#save.image()
 ```
 
 ## 2.1 Processing 16S reads in dada2
 --------------------------------------------------------------------------------------------------------------------
 ```{r}
 # read in sample names
-samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED/samples-16S.txt", what="character")
-
+samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED/samples-16S-nn.txt", what="character")
+samples = unique(samples)
 
 forward_16S_reads <- paste0("16S_", samples, "_1_trimmed.fastq.gz")
 reverse_16S_reads <- paste0("16S_", samples, "_2_trimmed.fastq.gz")
@@ -37,36 +37,578 @@ filtered_reverse_16S_reads <- paste0("16S_", samples, "_2_filtered.fastq.gz")
 
 setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
 pF = plotQualityProfile(forward_16S_reads) # median drops below Q30 around 260
+  # F read was 300 bp we cut off 18 bp for the primers, so sequences is now 282 nt
 
   # the primers span 515-926, we cut off about 40 bps when removing the primers, so
   # our target amplicon now is about 370
   # with 260 from forward, the reverse would need to be 110 minimum to reach
 setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
 pR = plotQualityProfile(reverse_16S_reads) # median drops below Q30 around 200
+  # R read was 300 bp we cut off 19 bp for the primers, so sequences is now 281 nt
 
   # when doing the trimming step, it's important to make sure we aren't trimming them
   # so short that they cannot overlap, which would cause problems when we try to merge later
-  # trimming the forward to 250 and reverse to 190 would leave us with around 70 bps overlap
+  # trimming the forward to 270 and reverse to 240 would leave us with around 99 bps overlap
 
 
-pdf('DK-R_16S_F_reads.pdf',width = 40, height =30)
+pdf('US-R_16S_F_reads.pdf',width = 40, height =30)
 pF
 dev.off()
 
-pdf('DK-R_16S_R_reads.pdf',width = 40, height =30)
+pdf('US-R_16S_R_reads.pdf',width = 40, height =30)
 pR
 dev.off()
 
-fastqFilter(fn, trimmed, truncQ=0, truncLen=224, verbose=TRUE)
-plotQualityProfile(trimmed)
+#any(duplicated(c(forward_16S_reads,reverse_16S_reads)))
+#any(duplicated(c(filtered_forward_16S_reads, filtered_reverse_16S_reads)))
 
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+filtered_out_16S <- filterAndTrim(forward_16S_reads, filtered_forward_16S_reads,
+                                  reverse_16S_reads, filtered_reverse_16S_reads,
+                                  maxEE=c(2,2), rm.phix=TRUE, multithread=TRUE,
+                                  truncLen=c(270,240))
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+pF = plotQualityProfile(filtered_forward_16S_reads)
+pR = plotQualityProfile(filtered_reverse_16S_reads)
+
+pdf('US-R_16S_F_reads_trimmed.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('US-R_16S_R_reads_trimmed.pdf',width = 40, height =30)
+pR
+dev.off()
+
+# looks fine could probabaly have trimmed of less from the F reads
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+err_forward_16S_reads <- learnErrors(filtered_forward_16S_reads, multithread = TRUE)
+# 105155820 total bases in 389466 reads from 9 samples will be used for learning the error rates.
+err_reverse_16S_reads <- learnErrors(filtered_reverse_16S_reads, multithread = TRUE)
+# 103171200 total bases in 429880 reads from 10 samples will be used for learning the error rates.
+
+pEF = plotErrors(err_forward_16S_reads, nominalQ = TRUE)
+pER = plotErrors(err_reverse_16S_reads, nominalQ = TRUE)
+
+pdf('US-515_16S_F_reads_trimmed_errors.pdf',width = 40, height =30)
+pEF
+dev.off()
+
+pdf('US-515_16S_R_reads_trimmed_errors.pdf',width = 40, height =30)
+pER
+dev.off()
+
+
+# dereplicate
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+derep_forward_16S <- derepFastq(filtered_forward_16S_reads, verbose = TRUE)
+names(derep_forward_16S) <- samples
+derep_reverse_16S <- derepFastq(filtered_reverse_16S_reads, verbose = TRUE)
+names(derep_reverse_16S) <- samples
+
+# denoise
+dada_forward_16S <- dada(derep_forward_16S, err = err_forward_16S_reads, multithread = TRUE)
+dada_reverse_16S <- dada(derep_reverse_16S, err = err_reverse_16S_reads, multithread = TRUE)
+
+  # doing a temp merge without changing the minimum overlap to get a look
+  # at the distribution of overlap values
+temp_merged_16S <- mergePairs(dada_forward_16S, derep_forward_16S,dada_reverse_16S, derep_reverse_16S)
+
+quantile(temp_merged_16S[[1]]$nmatch, probs=seq(0,1,0.05))
+#  0%   5%  10%  15%  20%  25%  30%  35%  40%  45%  50%  55%  60%  65%  70%  75%  80%  85%  90%  95% 100% 
+#  53  134  135  135  136  136  136  136  137  137  137  138  138  139  140  140  140  140  140  141  169 
+    # okay, going to use 100 as min overlap, as that captures >95% of the sequences in there
+
+# merge reads
+rm(temp_merged_16S)
+merged_16S <- mergePairs(dada_forward_16S, derep_forward_16S, dada_reverse_16S,
+                         derep_reverse_16S, minOverlap=100)
+
+seqtab_16S <- makeSequenceTable(merged_16S)
+dim(seqtab_16S)[2] # 14076
+sum(seqtab_16S) # 2425745
+
+# remove bimeras
+seqtab.nochim_16S <- removeBimeraDenovo(seqtab_16S, method = "consensus",
+                                        multithread = TRUE, verbose = TRUE)
+#Identified 5800 bimeras out of 14076 input sequences.
+
+dim(seqtab.nochim_16S)[2] # 8276
+
+sum(seqtab.nochim_16S) / sum(seqtab_16S) # 0.98
+# 98 % of reads pass chimera filtering
+
+## looking at counts throughout
+getN <- function(x) sum(getUniques(x))
+
+track_16S <- data.frame(row.names = samples, dada2_input = filtered_out_16S[,1],
+                        filtered = filtered_out_16S[,2],
+                        denoised = sapply(dada_forward_16S, getN),
+                        merged = sapply(merged_16S, getN), table=rowSums(seqtab_16S),
+                        no_chimeras = rowSums(seqtab.nochim_16S),
+                        "perc_reads_survived" = round(rowSums(seqtab.nochim_16S) / filtered_out_16S[,1] * 100, 1))
+
+track_16S
+
+write.csv(track_16S, "US_515_16S_reads.csv")
+
+### Taxonomy
+## creating a DNAStringSet object from the ASVs
+dna_16S <- DNAStringSet(getSequences(seqtab.nochim_16S))
+
+load("/Volumes/MJB_2TB/AmpliconSequencing/SILVA_SSU_r138.RData")
+
+tax_info_16S <- IdTaxa(dna_16S, trainingSet, strand = "both", processors = NULL)
+# ran for > 6 h
+
+
+### Making and writing out standard output files:
+# giving our seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs_16S <- colnames(seqtab.nochim_16S)
+
+asv_headers_16S <- vector(dim(seqtab.nochim_16S)[2], mode = "character")
+for (i in 1:dim(seqtab.nochim_16S)[2]) {
+  asv_headers_16S[i] <- paste(">ASV_16S", i, sep = "_")
+}
+
+# fasta:
+asv_fasta_16S <- c(rbind(asv_headers_16S, asv_seqs_16S))
+write(asv_fasta_16S, "US-515_16S_ASVs.fa")
+
+# count table:
+asv_tab_16S <- t(seqtab.nochim_16S) %>% data.frame
+row.names(asv_tab_16S) <- sub(">", "", asv_headers_16S)
+asv_tab_16S <- asv_tab_16S %>% rownames_to_column("ASV_ID")
+write.table(asv_tab_16S, "US-515_16S_ASVs_counts.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# tax table:
+
+    # creating vector of desired ranks
+ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species")
+
+    # creating table of taxonomy and setting any that are unclassified as "NA"
+tax_tab_16S <- t(sapply(tax_info_16S, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
+
+colnames(tax_tab_16S) <- ranks
+row.names(tax_tab_16S) <- NULL
+tax_tab_16S <- data.frame("ASV_ID" = sub(">", "", asv_headers_16S), tax_tab_16S, check.names = FALSE)
+
+write.table(tax_tab_16S, "US-515_16S_ASVs_taxonomy.tsv", sep = "\t", quote = F, row.names = FALSE)
+
+## saving the seqtab.nochim_16S object
+saveRDS(seqtab.nochim_16S, "US-515_seqtab.nochim_16S.rds")
 
 ```
 
+
+
+
 ## 2.2 Processing 18S reads in dada2
---------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------
 ```{r}
 
+samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED/samples-16S-nn.txt", what="character")
+# 18S_GMCF171-9-16-2-2-050-A-S9-L001_1_trimmed.fastq.gz seems to be empty
+# 18S_GMCF171-9-16-2-2-050-A-S9-L001_2_trimmed.fastq.gz seems to be empty
+
+# so decided to remove from list
+samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED/samples-16S-nn-rm.txt", what="character")
+
+
+samples = unique(samples)
+
+forward_18S_reads <- paste0("18S_", samples, "_1_trimmed.fastq.gz")
+reverse_18S_reads <- paste0("18S_", samples, "_2_trimmed.fastq.gz")
+
+filtered_forward_18S_reads <- paste0("18S_", samples, "_1_filtered.fastq.gz")
+filtered_reverse_18S_reads <- paste0("18S_", samples, "_2_filtered.fastq.gz")
+
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+pF = plotQualityProfile(forward_18S_reads) # median (green line) seems to cross Q30 around 250 bases
+pR = plotQualityProfile(reverse_18S_reads) # median crosses Q30 around 240, some look quite good others not at all
+
+pdf('US-515_18S_F_reads.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('US-515_18S_R_reads.pdf',width = 40, height =30)
+pR
+dev.off()
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+filtered_out_18S <- filterAndTrim(forward_18S_reads, filtered_forward_18S_reads,
+                                  reverse_18S_reads, filtered_reverse_18S_reads,
+                                  maxEE = c(2,2), rm.phix = TRUE, multithread = TRUE,
+                                  truncLen = c(250,240))
+
+pF = plotQualityProfile(filtered_forward_18S_reads)
+pR = plotQualityProfile(filtered_reverse_18S_reads)
+
+pdf('US-515_18S_F_reads_trimmed.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('US-515_18S_R_reads_trimmed.pdf',width = 40, height =30)
+pR
+dev.off()
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+err_forward_18S_reads <- learnErrors(filtered_forward_18S_reads, multithread = TRUE)
+err_reverse_18S_reads <- learnErrors(filtered_reverse_18S_reads, multithread = TRUE)
+
+pEF = plotErrors(err_forward_18S_reads, nominalQ = TRUE)
+pER = plotErrors(err_reverse_18S_reads, nominalQ = TRUE)
+
+pdf('US-515_18S_F_reads_trimmed_errors.pdf',width = 40, height =30)
+pEF
+dev.off()
+
+pdf('US-515_18S_R_reads_trimmed_errors.pdf',width = 40, height =30)
+pER
+dev.off()
+
+# dereplicate
+derep_forward_18S <- derepFastq(filtered_forward_18S_reads, verbose = TRUE)
+names(derep_forward_18S) <- samples
+derep_reverse_18S <- derepFastq(filtered_reverse_18S_reads, verbose = TRUE)
+names(derep_reverse_18S) <- samples
+
+# denoise
+dada_forward_18S <- dada(derep_forward_18S, err = err_forward_18S_reads, multithread = TRUE)
+dada_reverse_18S <- dada(derep_reverse_18S, err = err_reverse_18S_reads, multithread = TRUE)
+
+# merge
+  # justConcatenate=TRUE
+merged_18S <- mergePairs(dada_forward_18S, derep_forward_18S, dada_reverse_18S,
+                         derep_reverse_18S, justConcatenate = TRUE)
+
+seqtab_18S <- makeSequenceTable(merged_18S)
+dim(seqtab_18S)[2] # 4183
+sum(seqtab_18S) # 119815
+
+# remove chimeras
+seqtab.nochim_18S <- removeBimeraDenovo(seqtab_18S, method = "consensus",
+                                        multithread = TRUE, verbose = TRUE)
+dim(seqtab.nochim_18S)[2] # 2405
+
+sum(seqtab.nochim_18S) / sum(seqtab_18S) # 0.97
+
+## looking at counts throughout
+getN <- function(x) sum(getUniques(x))
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
+track_18S <- data.frame(row.names = samples, dada2_input = filtered_out_18S[,1],
+                        filtered = filtered_out_18S[,2],
+                        denoised = sapply(dada_forward_18S, getN),
+                        merged = sapply(merged_18S, getN), table=rowSums(seqtab_18S),
+                        no_chimeras = rowSums(seqtab.nochim_18S),
+                        "perc_reads_survived" = round(rowSums(seqtab.nochim_18S) / filtered_out_18S[,1] * 100, 1))
+
+# track_18S
+
+write.csv(track_18S, "US-515_18S_processing.csv")
+
+
+
+### Taxonomy
+############## PR2 v4.14.0 #####################
+
+library(DECIPHER)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(rio)
+library(DT)
+
+## creating a DNAStringSet object from the ASVs
+dna_18S <- DNAStringSet(getSequences(seqtab.nochim_18S))
+
+trainingSet = readRDS("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/US_AmpSeq/pr2_version_4.14.0_SSU.decipher.trained.rds")
+
+ # A training set of class 'Taxa'
+ #   * K-mer size: 8
+ #   * Number of rank levels: 10
+ #   * Total number of sequences: 114716
+ #   * Number of groups: 48211
+ #   * Number of problem groups: 120
+ #   * Number of problem sequences: 2451
+
+
+#file_training = "examples/pr2_version_4.14.0_SSU_dada2.fasta.gz"
+#file_trained = "examples/pr2_version_4.14.0_SSU.trained.sample.rds"
+#file_problems = "examples/pr2_version_4.14.0_SSU.problems.sample.rds"
+
+maxGroupSize <- 10 # max sequences per label (>= 1)
+allowGroupRemoval <- FALSE
+
+maxIterations <- 3 # must be >= 1
+
+#load("/Users/jxd124/Downloads/PR2_v4_13_March2021.RData")
+
+tax_info_18S <- IdTaxa(dna_18S, trainingSet, strand = "both", processors = NULL)
+
+# add the ranks to the taxon objective, adjust number of dimensions
+for (i in 1:2405){
+  tax_info_18S[[i]][["rank"]] = c("root","domain", "supergroup","division", "class", "order", "family", "genus", "species")
+  i=i+1
+}
+
+## making and writing out standard output files:
+# giving our seq headers more manageable names (i.e., ASV_18S_1, ASV_18S_2...)
+asv_seqs_18S <- colnames(seqtab.nochim_18S)
+
+asv_headers_18S <- vector(dim(seqtab.nochim_18S)[2], mode = "character")
+for (i in 1:dim(seqtab.nochim_18S)[2]) {
+  asv_headers_18S[i] <- paste(">ASV_18S", i, sep = "_")
+}
+
+# fasta:
+asv_fasta_18S <- c(rbind(asv_headers_18S, asv_seqs_18S))
+write(asv_fasta_18S, "US_515_18S_ASVs_PR2.fa")
+
+# count table:
+asv_tab_18S <- t(seqtab.nochim_18S) %>% data.frame
+row.names(asv_tab_18S) <- sub(">", "", asv_headers_18S)
+asv_tab_18S <- asv_tab_18S %>% rownames_to_column("ASV_ID")
+write.table(asv_tab_18S, "US_515_18S_ASVs_counts_PR2.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# tax table:
+
+    # creating vector of desired ranks
+ranks <- c("root","domain", "supergroup","division", "class", "order", "family", "genus", "species")
+
+    # creating table of taxonomy and setting any that are unclassified as "NA"
+tax_tab_18S <- t(sapply(tax_info_18S, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
+
+colnames(tax_tab_18S) <- ranks
+row.names(tax_tab_18S) <- NULL
+tax_tab_18S <- data.frame("ASV_ID" = sub(">", "", asv_headers_18S), tax_tab_18S, check.names = FALSE)
+
+write.table(tax_tab_18S, "US_515_18S_ASVs_taxonomy_PR2.tsv", sep = "\t", quote = F, row.names = FALSE)
+
+## saving the seqtab.nochim_18S object
+saveRDS(seqtab.nochim_18S, "US_515_seqtab.nochim_18S_PR2.rds")
+
+```
+
+## 3.1 Processing 18S reads from 18S primers in dada2
+-------------------------------------------------------------------------------------------------------------------
+
+```{r}
+
+samples = scan("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/05_FILTERED_565/samples-18S-565.txt", what="character")
+
+samples = unique(samples)
+
+forward_18S_reads <- paste0(samples, "_1_trimmed.fastq.gz")
+reverse_18S_reads <- paste0(samples, "_2_trimmed.fastq.gz")
+
+filtered_forward_18S_reads <- paste0(samples, "_1_filtered.fastq.gz")
+filtered_reverse_18S_reads <- paste0(samples, "_2_filtered.fastq.gz")
+
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/05_FILTERED_565")
+pF = plotQualityProfile(forward_18S_reads) # median (green line) seems to cross Q30 around 260 bases
+# forwards reads are 286 nt long
+
+pR = plotQualityProfile(reverse_18S_reads) # median crosses Q30 around 240, some look quite good others not at all
+# forwards reads are 287 nt long
+
+pdf('US-565_18S_F_reads.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('US-565_18S_R_reads.pdf',width = 40, height =30)
+pR
+dev.off()
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/05_FILTERED_565")
+filtered_out_18S <- filterAndTrim(forward_18S_reads, filtered_forward_18S_reads,
+                                  reverse_18S_reads, filtered_reverse_18S_reads,
+                                  maxEE = c(2,2), rm.phix = TRUE, multithread = TRUE,
+                                  truncLen = c(260,240))
+
+pF = plotQualityProfile(filtered_forward_18S_reads)
+pR = plotQualityProfile(filtered_reverse_18S_reads)
+
+pdf('US-565_18S_F_reads_trimmed.pdf',width = 40, height =30)
+pF
+dev.off()
+
+pdf('US-565_18S_R_reads_trimmed.pdf',width = 40, height =30)
+pR
+dev.off()
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/05_FILTERED_565")
+err_forward_18S_reads <- learnErrors(filtered_forward_18S_reads, multithread = TRUE)
+err_reverse_18S_reads <- learnErrors(filtered_reverse_18S_reads, multithread = TRUE)
+
+pEF = plotErrors(err_forward_18S_reads, nominalQ = TRUE)
+pER = plotErrors(err_reverse_18S_reads, nominalQ = TRUE)
+
+pdf('US-565_18S_F_reads_trimmed_errors.pdf',width = 40, height =30)
+pEF
+dev.off()
+
+pdf('US-565_18S_R_reads_trimmed_errors.pdf',width = 40, height =30)
+pER
+dev.off()
+
+# dereplicate
+derep_forward_18S <- derepFastq(filtered_forward_18S_reads, verbose = TRUE)
+names(derep_forward_18S) <- samples
+derep_reverse_18S <- derepFastq(filtered_reverse_18S_reads, verbose = TRUE)
+names(derep_reverse_18S) <- samples
+
+# denoise
+dada_forward_18S <- dada(derep_forward_18S, err = err_forward_18S_reads, multithread = TRUE)
+dada_reverse_18S <- dada(derep_reverse_18S, err = err_reverse_18S_reads, multithread = TRUE)
+
+# merge
+  # doing a temp merge without changing the minimum overlap to get a look
+  # at the distribution of overlap values
+temp_merged_18S <- mergePairs(dada_forward_18S, derep_forward_18S,dada_reverse_18S, derep_reverse_18S)
+
+quantile(temp_merged_18S[[1]]$nmatch, probs=seq(0,1,0.05))
+#  0%   5%  10%  15%  20%  25%  30%  35%  40%  45%  50%  55%  60%  65%  70%  75%  80%  85%  90%  95% 100% 
+#  45  106  108  110  113  114  115  116  116  116  116  116  117  117  118  119  120  122  124  130  237 
+    # okay, going to use 100 as min overlap, as that captures >95% of the sequences in there
+
+# merge reads
+rm(temp_merged_18S)
+
+merged_18S <- mergePairs(dada_forward_18S, derep_forward_18S, dada_reverse_18S,
+                         derep_reverse_18S, minOverlap=100)
+
+seqtab_18S <- makeSequenceTable(merged_18S)
+dim(seqtab_18S)[2] # 10051
+sum(seqtab_18S) # 1633174
+
+# remove chimeras
+seqtab.nochim_18S <- removeBimeraDenovo(seqtab_18S, method = "consensus",
+                                        multithread = TRUE, verbose = TRUE)
+#Identified 3631 bimeras out of 10051 input sequences.
+
+dim(seqtab.nochim_18S)[2] # 6420
+
+sum(seqtab.nochim_18S) / sum(seqtab_18S) # 0.97
+
+## looking at counts throughout
+getN <- function(x) sum(getUniques(x))
+
+setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/05_FILTERED_565")
+track_18S <- data.frame(row.names = samples, dada2_input = filtered_out_18S[,1],
+                        filtered = filtered_out_18S[,2],
+                        denoised = sapply(dada_forward_18S, getN),
+                        merged = sapply(merged_18S, getN), table=rowSums(seqtab_18S),
+                        no_chimeras = rowSums(seqtab.nochim_18S),
+                        "perc_reads_survived" = round(rowSums(seqtab.nochim_18S) / filtered_out_18S[,1] * 100, 1))
+
+# track_18S
+
+write.csv(track_18S, "US-565_18S_processing.csv")
+
+
+
+### Taxonomy
+############## PR2 v4.14.0 #####################
+
+library(DECIPHER)
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(rio)
+library(DT)
+
+## creating a DNAStringSet object from the ASVs
+dna_18S <- DNAStringSet(getSequences(seqtab.nochim_18S))
+
+#trainingSet = readRDS("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/US_AmpSeq/pr2_version_4.14.0_SSU.decipher.trained.rds")
+
+ # A training set of class 'Taxa'
+ #   * K-mer size: 8
+ #   * Number of rank levels: 10
+ #   * Total number of sequences: 114716
+ #   * Number of groups: 48211
+ #   * Number of problem groups: 120
+ #   * Number of problem sequences: 2451
+
+
+#file_training = "examples/pr2_version_4.14.0_SSU_dada2.fasta.gz"
+#file_trained = "examples/pr2_version_4.14.0_SSU.trained.sample.rds"
+#file_problems = "examples/pr2_version_4.14.0_SSU.problems.sample.rds"
+
+maxGroupSize <- 10 # max sequences per label (>= 1)
+allowGroupRemoval <- FALSE
+
+maxIterations <- 3 # must be >= 1
+
+#load("/Users/jxd124/Downloads/PR2_v4_13_March2021.RData")
+
+tax_info_18S <- IdTaxa(dna_18S, trainingSet, strand = "both", processors = NULL)
+# Time difference of 15590.8 secs
+
+# add the ranks to the taxon objective, adjust number of dimensions
+for (i in 1:6420){
+  tax_info_18S[[i]][["rank"]] = c("root","domain", "supergroup","division", "class", "order", "family", "genus", "species")
+  i=i+1
+}
+
+## making and writing out standard output files:
+# giving our seq headers more manageable names (i.e., ASV_18S_1, ASV_18S_2...)
+asv_seqs_18S <- colnames(seqtab.nochim_18S)
+
+asv_headers_18S <- vector(dim(seqtab.nochim_18S)[2], mode = "character")
+for (i in 1:dim(seqtab.nochim_18S)[2]) {
+  asv_headers_18S[i] <- paste(">ASV_18S", i, sep = "_")
+}
+
+# fasta:
+asv_fasta_18S <- c(rbind(asv_headers_18S, asv_seqs_18S))
+write(asv_fasta_18S, "US_565_18S_ASVs_PR2.fa")
+
+# count table:
+asv_tab_18S <- t(seqtab.nochim_18S) %>% data.frame
+row.names(asv_tab_18S) <- sub(">", "", asv_headers_18S)
+asv_tab_18S <- asv_tab_18S %>% rownames_to_column("ASV_ID")
+write.table(asv_tab_18S, "US_565_18S_ASVs_counts_PR2.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# tax table:
+
+    # creating vector of desired ranks
+ranks <- c("root","domain", "supergroup","division", "class", "order", "family", "genus", "species")
+
+    # creating table of taxonomy and setting any that are unclassified as "NA"
+tax_tab_18S <- t(sapply(tax_info_18S, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
+
+colnames(tax_tab_18S) <- ranks
+row.names(tax_tab_18S) <- NULL
+tax_tab_18S <- data.frame("ASV_ID" = sub(">", "", asv_headers_18S), tax_tab_18S, check.names = FALSE)
+
+write.table(tax_tab_18S, "US_565_18S_ASVs_taxonomy_PR2.tsv", sep = "\t", quote = F, row.names = FALSE)
+
+## saving the seqtab.nochim_18S object
+saveRDS(seqtab.nochim_18S, "US_565_seqtab.nochim_18S_PR2.rds")
 
 ```
 
