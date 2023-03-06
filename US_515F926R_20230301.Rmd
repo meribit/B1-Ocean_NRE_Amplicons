@@ -79,7 +79,7 @@ pdf('US-R_16S_R_reads_trimmed.pdf',width = 40, height =30)
 pR
 dev.off()
 
-# looks fine could probabaly have trimmed of less from the F reads
+# looks fine could probably have trimmed of less from the F reads
 
 setwd("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/04_FILTERED")
 err_forward_16S_reads <- learnErrors(filtered_forward_16S_reads, multithread = TRUE)
@@ -153,6 +153,7 @@ track_16S
 write.csv(track_16S, "US_515_16S_reads.csv")
 
 ### Taxonomy
+################# SILVA ################################
 ## creating a DNAStringSet object from the ASVs
 dna_16S <- DNAStringSet(getSequences(seqtab.nochim_16S))
 
@@ -202,6 +203,121 @@ write.table(tax_tab_16S, "US-515_16S_ASVs_taxonomy.tsv", sep = "\t", quote = F, 
 
 ## saving the seqtab.nochim_16S object
 saveRDS(seqtab.nochim_16S, "US-515_seqtab.nochim_16S.rds")
+
+################# GTDB ################################
+## creating a DNAStringSet object from the ASVs
+dna_16S <- DNAStringSet(getSequences(seqtab.nochim_16S))
+
+load("/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/US_AmpSeq/GTDB_r207-mod_April2022.RData")
+
+tax_info_16S <- IdTaxa(dna_16S, trainingSet, strand = "both", processors = NULL)
+# ran for > 6 h
+
+
+### Making and writing out standard output files:
+# giving our seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs_16S <- colnames(seqtab.nochim_16S)
+
+asv_headers_16S <- vector(dim(seqtab.nochim_16S)[2], mode = "character")
+for (i in 1:dim(seqtab.nochim_16S)[2]) {
+  asv_headers_16S[i] <- paste(">ASV_16S", i, sep = "_")
+}
+
+# fasta:
+asv_fasta_16S <- c(rbind(asv_headers_16S, asv_seqs_16S))
+write(asv_fasta_16S, "US-515_16S_ASVs_GTDB.fa")
+
+# count table:
+asv_tab_16S <- t(seqtab.nochim_16S) %>% data.frame
+row.names(asv_tab_16S) <- sub(">", "", asv_headers_16S)
+asv_tab_16S <- asv_tab_16S %>% rownames_to_column("ASV_ID")
+write.table(asv_tab_16S, "US-515_16S_ASVs_counts_GTDB.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# tax table:
+
+    # creating vector of desired ranks
+ranks <- c("domain", "phylum", "class", "order", "family", "genus", "species")
+
+    # creating table of taxonomy and setting any that are unclassified as "NA"
+tax_tab_16S <- t(sapply(tax_info_16S, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
+
+colnames(tax_tab_16S) <- ranks
+row.names(tax_tab_16S) <- NULL
+tax_tab_16S <- data.frame("ASV_ID" = sub(">", "", asv_headers_16S), tax_tab_16S, check.names = FALSE)
+
+write.table(tax_tab_16S, "US-515_16S_ASVs_taxonomy_GTDB.tsv", sep = "\t", quote = F, row.names = FALSE)
+
+## saving the seqtab.nochim_16S object
+saveRDS(seqtab.nochim_16S, "US-515_seqtab.nochim_16S_GTDB.rds")
+
+# > 4000 ASVs Unknown domain, more than half not annotated
+
+
+################# GTDB - DADA2 ################################
+## creating a DNAStringSet object from the ASVs
+dna_16S <- DNAStringSet(getSequences(seqtab.nochim_16S))
+
+tax_info_16S_GTDB <- assignTaxonomy(dna_16S, "/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/US_AmpSeq/DADA2_GTDB/gtdb-sbdi-sativa.r07rs207.1genome.assignTaxonomy.fna", verbose=TRUE, multithread = TRUE)
+tax_info_16S_GTDB_plus <- addSpecies(tax_info_16S_GTDB, "/Users/jxd124/Desktop/Meriel/UCPH/B1-Ocean/data_US/DNA_US/DNA_US_AmpliconSequencing/US_AmpSeq/DADA2_GTDB/gtdb-sbdi-sativa.r07rs207.20genomes.addSpecies.fna", verbose=TRUE)
+
+#159 out of 8276 were assigned to the species level.
+# Of which 20 had genera consistent with the input table.
+
+#tax_info_16S <- IdTaxa(dna_16S, trainingSet, strand = "both", processors = NULL)
+# ran for > 6 h
+
+
+### Making and writing out standard output files:
+# giving our seq headers more manageable names (ASV_1, ASV_2...)
+asv_seqs_16S <- colnames(seqtab.nochim_16S)
+
+asv_headers_16S <- vector(dim(seqtab.nochim_16S)[2], mode = "character")
+for (i in 1:dim(seqtab.nochim_16S)[2]) {
+  asv_headers_16S[i] <- paste(">ASV_16S", i, sep = "_")
+}
+
+# fasta:
+asv_fasta_16S <- c(rbind(asv_headers_16S, asv_seqs_16S))
+write(asv_fasta_16S, "US-515_16S_ASVs_dada_GTDB.fa")
+
+# count table:
+asv_tab_16S <- t(seqtab.nochim_16S) %>% data.frame
+row.names(asv_tab_16S) <- sub(">", "", asv_headers_16S)
+asv_tab_16S <- asv_tab_16S %>% rownames_to_column("ASV_ID")
+write.table(asv_tab_16S, "US-515_16S_ASVs_counts_dada_GTDB.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# tax table:
+
+    # creating vector of desired ranks
+ranks = colnames(tax_info_16S_GTDB_plus)
+ranks = c("Kingdom", "Domain","Phylum" , "Class" ,"Order","Family" ,"Genus","Species","Species2")
+    # creating table of taxonomy and setting any that are unclassified as "NA"
+tax_tab_16S <- t(sapply(tax_info_16S_GTDB_plus, function(x) {
+    m <- match(ranks, x$rank)
+    taxa <- x$taxon[m]
+    taxa[startsWith(taxa, "unclassified_")] <- NA
+    taxa
+}))
+
+tax_tab_16S = tax_info_16S_GTDB_plus
+colnames(tax_tab_16S) <- ranks
+row.names(tax_tab_16S) <- NULL
+tax_tab_16S <- data.frame("ASV_ID" = sub(">", "", asv_headers_16S), tax_tab_16S, check.names = FALSE)
+
+write.table(tax_tab_16S, "US-515_16S_ASVs_taxonomy_dada_GTDB.tsv", sep = "\t", quote = F, row.names = FALSE)
+
+## saving the seqtab.nochim_16S object
+saveRDS(seqtab.nochim_16S, "US-515_seqtab.nochim_16S_dada_GTDB.rds")
+
+# > 4000 ASVs Unknown domain, more than half not annotated
+
+
+
 
 ```
 
